@@ -3,6 +3,8 @@ const SPREADSHEET_ID = "1bdNIooE1uHFcnSuOZnVBu2YmLZua53BpXnxaS3NiUOQ";
 
 // Header sheet yang punya kolom tambahan (tipe soal & koreksi esai)
 const SOAL_HEADERS  = ["id", "kode_tes", "pertanyaan", "opsi_a", "opsi_b", "opsi_c", "opsi_d", "opsi_e", "jawaban_benar", "poin", "tipe_soal"];
+const SESI_HEADERS = ["username", "nama", "kelompok", "status", "kode_tes", "waktu_login", "last_update", "session_id", "ping_ms"];
+const PROGRESS_HEADERS = ["username", "kode_tes", "jawaban_json", "deadline_ms", "pelanggaran", "updated"];
 const HASIL_HEADERS = ["id", "username", "nama", "kode_tes", "nilai", "waktu_selesai",
                        "jawaban_json", "skor_otomatis", "poin_total", "poin_esai", "status_koreksi", "skor_esai", "skor_esai_json"];
 
@@ -15,8 +17,13 @@ function ensureHeaders(sheet, headers) {
   }
 }
 
+let _ss = null;
+const _shCache = {};
+
 function getSheet(sheetName) {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  if (_shCache[sheetName]) return _shCache[sheetName];
+  if (!_ss) _ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const ss = _ss;
   let sheet = ss.getSheetByName(sheetName);
   
   if (!sheet) {
@@ -36,11 +43,67 @@ function getSheet(sheetName) {
       sheet.appendRow(["id", "username", "nama", "waktu_request", "status"]);
     } else if (sheetName === "hasil_tes") {
       sheet.appendRow(HASIL_HEADERS);
+    } else if (sheetName === "sesi_siswa") {
+      sheet.appendRow(SESI_HEADERS);
+    } else if (sheetName === "progress_ujian") {
+      sheet.appendRow(PROGRESS_HEADERS);
     }
   }
   if (sheetName === "soal") ensureHeaders(sheet, SOAL_HEADERS);
   if (sheetName === "hasil_tes") ensureHeaders(sheet, HASIL_HEADERS);
+  if (sheetName === "sesi_siswa") ensureHeaders(sheet, SESI_HEADERS);
+  _shCache[sheetName] = sheet;
   return sheet;
+}
+
+// ===== CACHE SERVER (CacheService) =====
+const CACHE_TTL = 21600; // 6 jam (maksimum CacheService)
+// Aksi tulis -> grup cache yang harus dibuang
+const INVALIDATE = {
+  addSiswa: ["siswa"], editSiswa: ["siswa"], deleteSiswa: ["siswa"], importSiswaBatch: ["siswa"],
+  addMapel: ["mapel"], editMapel: ["mapel", "soal"], deleteMapel: ["mapel"], importMapelBatch: ["mapel"],
+  uploadSoal: ["soal"], editSoal: ["soal"], deleteSoal: ["soal"], importSoalBatch: ["soal"],
+  simpanJawabanSiswa: ["hasil"], deleteHasil: ["hasil"], deleteHasilByMapel: ["hasil"], simpanKoreksiEsai: ["hasil"]
+};
+
+function cacheVer_(group) {
+  const c = CacheService.getScriptCache();
+  let v = c.get("ver_" + group);
+  if (!v) { v = String(Date.now()); c.put("ver_" + group, v, CACHE_TTL); }
+  return v;
+}
+function bumpCache_(groups) {
+  const c = CacheService.getScriptCache();
+  groups.forEach(gr => c.put("ver_" + gr, String(Date.now()), CACHE_TTL));
+}
+function cacheGet_(group, key) {
+  const c = CacheService.getScriptCache();
+  const base = "d_" + group + "_" + cacheVer_(group) + "_" + key;
+  const meta = c.get(base + "_n");
+  if (!meta) return null;
+  const n = parseInt(meta), keys = [];
+  for (let i = 0; i < n; i++) keys.push(base + "_" + i);
+  const parts = c.getAll(keys);
+  let s = "";
+  for (let i = 0; i < n; i++) { const p = parts[base + "_" + i]; if (p === undefined) return null; s += p; }
+  try { return JSON.parse(s); } catch (e) { return null; }
+}
+function cachePut_(group, key, obj) {
+  const c = CacheService.getScriptCache();
+  const base = "d_" + group + "_" + cacheVer_(group) + "_" + key;
+  const s = JSON.stringify(obj), SZ = 40000, n = Math.ceil(s.length / SZ);
+  if (n > 40) return; // terlalu besar, tidak di-cache
+  const o = {};
+  for (let i = 0; i < n; i++) o[base + "_" + i] = s.substr(i * SZ, SZ);
+  o[base + "_n"] = String(n);
+  try { c.putAll(o, CACHE_TTL); } catch (e) {}
+}
+function cached_(group, key, fn) {
+  const hit = cacheGet_(group, key);
+  if (hit) return hit;
+  const r = fn();
+  if (r && r.status === "success") cachePut_(group, key, r);
+  return r;
 }
 
 function responseJSON(res) {
@@ -55,22 +118,24 @@ function doGet(e) {
 
   try {
     if (action === "getSiswa") {
-      result = getSiswaData();
+      result = cached_("siswa", "all", getSiswaData);
     } else if (action === "getMapel") {
-      result = getMapelData();
+      result = cached_("mapel", "all", getMapelData);
     } else if (action === "getAllSoal") {
-      result = getAllSoalData();
+      result = cached_("soal", "all", getAllSoalData);
     } else if (action === "getSoal") {
       const kodeTes = e ? e.parameter.kode_tes : "";
-      result = getSoalByKode(kodeTes);
+      result = cached_("soal", "k_" + kodeTes, () => getSoalByKode(kodeTes));
     } else if (action === "getStatusTes") {
       result = getStatusTesData();
     } else if (action === "generateToken") {
       result = generateNewToken();
     } else if (action === "getResetRequest") {
       result = getResetRequestData();
+    } else if (action === "getSesiSiswa") {
+      result = getSesiSiswaData();
     } else if (action === "getHasilUjian") {
-      result = getHasilUjianData();
+      result = cached_("hasil", "all", getHasilUjianData);
     } else if (action === "getDetailHasil") {
       result = getDetailHasil(e.parameter.id);
     } else {
@@ -135,6 +200,14 @@ function doPost(e) {
       result = simpanStatusTes(payload);
     } else if (action === "toggleStatusTes") {
       result = toggleStatusTes(payload);
+    } else if (action === "editStatusTes") {
+      result = editStatusTes(payload);
+    } else if (action === "deleteStatusTes") {
+      result = deleteStatusTes(payload);
+    } else if (action === "simpanProgress") {
+      result = simpanProgress(payload);
+    } else if (action === "resetSesiSiswa") {
+      result = resetSesiSiswa(payload);
     } else if (action === "approveReset") {
       result = approveResetLogin(payload);
     } else if (action === "rejectReset") {
@@ -142,6 +215,7 @@ function doPost(e) {
     } else {
       result = { status: "error", message: "Action POST tidak dikenal" };
     }
+    if (result && result.status === "success" && INVALIDATE[action]) bumpCache_(INVALIDATE[action]);
   } catch (err) {
     result = { status: "error", message: err.toString() };
   }
@@ -149,12 +223,191 @@ function doPost(e) {
   return responseJSON(result);
 }
 
+// ===== SESI SISWA (LOGIN / MENGERJAKAN / SELESAI / RESET) =====
+function getSesi_(username) {
+  const sheet = getSheet("sesi_siswa");
+  const n = sheet.getLastRow() - 1;
+  if (n < 1) return null;
+  const u = username.toString().trim().toLowerCase();
+  const col = sheet.getRange(2, 1, n, 1).getValues();
+  for (let i = 0; i < n; i++) {
+    if (col[i][0].toString().trim().toLowerCase() === u) {
+      const r = sheet.getRange(i + 2, 1, 1, 9).getValues()[0];
+      return { row: i + 2, username: r[0], nama: r[1], kelompok: r[2], status: r[3].toString(),
+               kode_tes: r[4], waktu_login: r[5], last_update: r[6], session_id: (r[7] || "").toString(), ping_ms: Number(r[8]) || 0 };
+    }
+  }
+  return null;
+}
+
+// Buat/ubah sesi satu siswa. f: {nama, kelompok, status, kode_tes, session_id, login}
+function upsertSesi_(username, f) {
+  const sheet = getSheet("sesi_siswa");
+  const now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+  const cur = getSesi_(username);
+  let status, sid;
+  if (cur) {
+    status = f.status !== undefined ? f.status : cur.status;
+    sid = f.session_id !== undefined ? f.session_id : cur.session_id;
+    sheet.getRange(cur.row, 1, 1, 9).setValues([[
+      cur.username,
+      f.nama !== undefined ? f.nama : cur.nama,
+      f.kelompok !== undefined ? f.kelompok : cur.kelompok,
+      status,
+      f.kode_tes !== undefined ? f.kode_tes : cur.kode_tes,
+      f.login ? now : cur.waktu_login,
+      now, sid, Date.now()
+    ]]);
+  } else {
+    status = f.status || "LOGIN"; sid = f.session_id || "";
+    sheet.appendRow([username, f.nama || "", f.kelompok || "", status, f.kode_tes || "", now, now, sid, Date.now()]);
+  }
+  // salin ke cache agar pengecekan sesi saat simpan otomatis tidak menyentuh sheet
+  try { CacheService.getScriptCache().put("s_" + username.toString().trim().toLowerCase(), JSON.stringify({ status: status, sid: sid }), CACHE_TTL); } catch (e) {}
+}
+
+function getSesiSiswaData() {
+  const sheet = getSheet("sesi_siswa");
+  const n = sheet.getLastRow() - 1;
+  if (n < 1) return { status: "success", data: [] };
+  const rows = sheet.getRange(2, 1, n, 9).getValues();
+  const keys = rows.filter(r => r[3] === "MENGERJAKAN").map(r => "p_" + r[0].toString().trim().toLowerCase());
+  const pc = keys.length ? CacheService.getScriptCache().getAll(keys) : {};
+  const adaProg = {};
+  const ps = getSheet("progress_ujian"), pn = ps.getLastRow() - 1;
+  if (pn >= 1) ps.getRange(2, 1, pn, 1).getValues().forEach(r => adaProg[r[0].toString().trim().toLowerCase()] = true);
+  const now = Date.now();
+  return { status: "success", data: rows.map(r => {
+    const u = r[0].toString().trim().toLowerCase();
+    let p = null;
+    try { p = pc["p_" + u] ? JSON.parse(pc["p_" + u]) : null; } catch (e) {}
+    let terjawab = null;
+    if (p) { try { terjawab = Object.keys(JSON.parse(p.j || "{}")).length; } catch (e) { terjawab = 0; } }
+    const ping = Math.max(Number(r[8]) || 0, (p && p.t) || 0);
+    return {
+      username: r[0], nama: r[1], kelompok: r[2], status: r[3], kode_tes: r[4],
+      waktu_login: r[5] ? r[5].toString() : "",
+      idle_detik: ping ? Math.max(Math.round((now - ping) / 1000), 0) : null,
+      terjawab: terjawab,
+      ada_progres: !!(adaProg[u] || p)
+    };
+  }) };
+}
+
+// ===== PROGRES UJIAN (jawaban sementara di server) =====
+function getProgress_(username, kodeTes) {
+  const sheet = getSheet("progress_ujian");
+  const n = sheet.getLastRow() - 1;
+  if (n < 1) return null;
+  const u = username.toString().trim().toLowerCase(), k = kodeTes.toString().split(" (")[0].trim().toLowerCase();
+  const keys = sheet.getRange(2, 1, n, 2).getValues();
+  for (let i = 0; i < n; i++) {
+    if (keys[i][0].toString().trim().toLowerCase() === u && keys[i][1].toString().split(" (")[0].trim().toLowerCase() === k) {
+      const r = sheet.getRange(i + 2, 3, 1, 3).getValues()[0];
+      return { row: i + 2, jawaban: r[0] || "{}", deadline_ms: Number(r[1]) || 0, pelanggaran: Number(r[2]) || 0 };
+    }
+  }
+  return null;
+}
+
+function hapusProgress_(username) {
+  const u = username.toString().trim().toLowerCase();
+  try { CacheService.getScriptCache().remove("p_" + u); } catch (e) {}
+  const sheet = getSheet("progress_ujian");
+  const n = sheet.getLastRow() - 1;
+  if (n < 1) return;
+  const col = sheet.getRange(2, 1, n, 1).getValues();
+  for (let i = n - 1; i >= 0; i--) {
+    if (col[i][0].toString().trim().toLowerCase() === u) sheet.deleteRow(i + 2);
+  }
+}
+
+// Mulai/lanjutkan progres: deadline dihitung dari awal pengerjaan (waktu mati tetap berjalan walau terputus)
+function mulaiAtauLanjutProgress_(username, kodeTes, durasiMenit) {
+  const u = username.toString().trim().toLowerCase();
+  const cache = CacheService.getScriptCache();
+  const kodeAsli = kodeTes.toString().split(" (")[0];
+  let p = null;
+  try { p = JSON.parse(cache.get("p_" + u) || "null"); } catch (e) {}
+  if (p && p.k.toString().split(" (")[0] !== kodeAsli) p = null;
+  if (!p) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try {
+      const sp = getProgress_(username, kodeTes);
+      if (sp) {
+        p = { k: kodeTes, j: sp.jawaban, v: sp.pelanggaran, d: sp.deadline_ms };
+      } else {
+        const d = Date.now() + durasiMenit * 60000;
+        getSheet("progress_ujian").appendRow([username, kodeTes, "{}", d, 0, Date.now()]);
+        p = { k: kodeTes, j: "{}", v: 0, d: d };
+      }
+      try { cache.put("p_" + u, JSON.stringify(p), CACHE_TTL); } catch (e) {}
+    } finally { lock.releaseLock(); }
+  }
+  let jawaban = {};
+  try { jawaban = JSON.parse(p.j || "{}"); } catch (e) {}
+  return {
+    sisa_detik: Math.max(Math.floor((p.d - Date.now()) / 1000), 0),
+    jawaban: jawaban,
+    pelanggaran: p.v || 0,
+    dilanjutkan: Object.keys(jawaban).length > 0 || (p.v || 0) > 0
+  };
+}
+
+// Jalur cepat: cek sesi & simpan ke CacheService (tanpa menyentuh sheet).
+// Sheet hanya ditulis bila payload.persist = true (berkala / saat tab ditutup).
+function simpanProgress(payload) {
+  const u = (payload.username || "").toString().trim().toLowerCase();
+  const cache = CacheService.getScriptCache();
+  let ses = null;
+  try { ses = JSON.parse(cache.get("s_" + u) || "null"); } catch (e) {}
+  if (!ses) { const s = getSesi_(u); if (s) ses = { status: s.status, sid: s.session_id }; }
+  if (!ses || ses.status !== "MENGERJAKAN" || ses.sid !== (payload.session_id || "")) {
+    return { status: "error", code: "SESI_INVALID", message: "Sesi Anda tidak lagi aktif (kemungkinan direset Proktor atau login di perangkat lain)." };
+  }
+  let p = null;
+  try { p = JSON.parse(cache.get("p_" + u) || "null"); } catch (e) {}
+  if (!p) {
+    const sp = getProgress_(u, payload.kode_tes);
+    p = sp ? { k: payload.kode_tes, j: sp.jawaban, v: sp.pelanggaran, d: sp.deadline_ms } : { k: payload.kode_tes, j: "{}", v: 0, d: 0 };
+  }
+  if (payload.jawaban_json !== undefined) { p.j = payload.jawaban_json; p.v = parseInt(payload.pelanggaran) || 0; }
+  p.t = Date.now();
+  let cacheOk = true;
+  try { cache.put("p_" + u, JSON.stringify(p), CACHE_TTL); } catch (e) { cacheOk = false; } // mis. terlalu besar
+  if (payload.persist || !cacheOk) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try {
+      const sp = getProgress_(u, payload.kode_tes);
+      if (sp) getSheet("progress_ujian").getRange(sp.row, 3, 1, 4).setValues([[p.j, sp.deadline_ms, p.v, Date.now()]]);
+      upsertSesi_(payload.username, {});
+    } finally { lock.releaseLock(); }
+  }
+  return { status: "success" };
+}
+
+// Proktor membuka kunci sesi siswa dari dashboard (hapus_progress = mulai ulang dari awal)
+function resetSesiSiswa(payload) {
+  const sesi = getSesi_(payload.username || "");
+  if (!sesi) return { status: "error", message: "Sesi siswa tidak ditemukan" };
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    upsertSesi_(payload.username, { status: "RESET", session_id: "" });
+    if (payload.hapus_progress) hapusProgress_(payload.username);
+  } finally { lock.releaseLock(); }
+  return { status: "success", message: payload.hapus_progress
+    ? "Sesi direset. Siswa akan mengulang ujian dari awal."
+    : "Sesi direset. Siswa bisa login dan melanjutkan ujian." };
+}
+
 // FITUR INTERAKSI SISWA
 function handleLoginSiswa(payload) {
-  const sheet = getSheet("siswa");
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return { status: "error", message: "Data siswa masih kosong" };
-  data.shift();
+  const sisRes = cached_("siswa", "all", getSiswaData);
+  const data = ((sisRes && sisRes.data) || []).map(s => [s.username, s.nama, s.kelompok, s.nik]);
+  if (data.length === 0) return { status: "error", message: "Data siswa masih kosong" };
 
   for (let i = 0; i < data.length; i++) {
     const user = data[i][0].toString().trim();
@@ -162,6 +415,18 @@ function handleLoginSiswa(payload) {
 
     if (user.toLowerCase() === payload.username.toString().trim().toLowerCase() && 
         nik.toLowerCase() === payload.password.toString().trim().toLowerCase()) {
+      // Cegah login ganda: sesi aktif di perangkat lain harus di-reset Proktor
+      const lock = LockService.getScriptLock();
+      lock.waitLock(10000);
+      try {
+        const sesi = getSesi_(data[i][0]);
+        const aktif = sesi && (sesi.status === "LOGIN" || sesi.status === "MENGERJAKAN");
+        if (aktif && sesi.session_id !== (payload.session_id || "")) {
+          return { status: "error", message: "Akun ini sedang aktif / sudah login di perangkat lain. Silakan klik 'Ajukan Reset Login ke Proktor' lalu minta Proktor menyetujui." };
+        }
+        upsertSesi_(data[i][0], { nama: data[i][1], kelompok: data[i][2], status: aktif ? sesi.status : "LOGIN",
+                                  kode_tes: aktif ? sesi.kode_tes : "", session_id: payload.session_id || "", login: !aktif });
+      } finally { lock.releaseLock(); }
       return {
         status: "success",
         data: {
@@ -195,9 +460,19 @@ function handleKonfirmasiToken(payload) {
         if (payload.username && sudahMengerjakan_(payload.username, item[1])) {
           return { status: "error", message: "Anda sudah mengerjakan ujian ini. Hubungi Proktor jika perlu mengulang." };
         }
+        // Validasi jadwal (tanggal & jam) sesuai zona waktu script
+        const cek = cekJadwalTes_(item);
+        if (cek) return { status: "error", message: cek };
+        const info = getInfoMapel_(item[1]);
+        if (payload.username) upsertSesi_(payload.username, { status: "MENGERJAKAN", kode_tes: item[1] });
+        const prog = payload.username ? mulaiAtauLanjutProgress_(payload.username, item[1], info.waktu) : null;
         return {
           status: "success",
-          kode_tes: item[1]
+          kode_tes: item[1],
+          nama_mapel: info.nama_mapel,
+          waktu: info.waktu,
+          sisa_detik: prog ? prog.sisa_detik : info.waktu * 60,
+          progress: prog && prog.dilanjutkan ? { jawaban: prog.jawaban, pelanggaran: prog.pelanggaran } : null
         };
       } else {
         return { status: "error", message: "Token ini bukan untuk Kelompok/Sesi Anda!" };
@@ -207,17 +482,64 @@ function handleKonfirmasiToken(payload) {
   return { status: "error", message: "Token tidak valid atau Ujian belum diaktifkan oleh Proktor!" };
 }
 
+
+// ===== HELPER JADWAL TES =====
+function toDateStr_(val) {
+  if (!val) return "";
+  if (val instanceof Date) return Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  return val.toString().replace(/^'/, "").split("T")[0].trim();
+}
+function toTimeStr_(val) {
+  if (!val) return "";
+  if (val instanceof Date) return Utilities.formatDate(val, Session.getScriptTimeZone(), "HH:mm");
+  const m = val.toString().replace(/^'/, "").match(/(\d{1,2}):(\d{2})/);
+  return m ? m[1].padStart(2, "0") + ":" + m[2] : "";
+}
+// Tes dianggap SELESAI bila status bukan AKTIF atau jam selesai sudah lewat
+function isTesSelesai_(row) {
+  if (row[3].toString().trim().toUpperCase() !== "AKTIF") return true;
+  const tgl = toDateStr_(row[5]), jamSel = toTimeStr_(row[7]);
+  if (!tgl) return false;
+  const tz = Session.getScriptTimeZone(), now = new Date();
+  const today = Utilities.formatDate(now, tz, "yyyy-MM-dd"), hm = Utilities.formatDate(now, tz, "HH:mm");
+  if (today > tgl) return true;
+  return today === tgl && jamSel !== "" && hm > jamSel;
+}
+// Kembalikan pesan error bila di luar jadwal, atau "" bila boleh mulai
+function cekJadwalTes_(row) {
+  const tgl = toDateStr_(row[5]), jm = toTimeStr_(row[6]), js = toTimeStr_(row[7]);
+  if (!tgl) return "";
+  const tz = Session.getScriptTimeZone(), now = new Date();
+  const today = Utilities.formatDate(now, tz, "yyyy-MM-dd"), hm = Utilities.formatDate(now, tz, "HH:mm");
+  if (today < tgl) return "Tes ini dijadwalkan pada tanggal " + tgl + ".";
+  if (today > tgl) return "Jadwal tes ini sudah berakhir (" + tgl + ").";
+  if (jm && hm < jm) return "Tes belum dimulai. Jadwal mulai pukul " + jm + ".";
+  if (js && hm > js) return "Waktu tes sudah berakhir (selesai pukul " + js + ").";
+  return "";
+}
+function getInfoMapel_(kodeTes) {
+  const list = (cached_("mapel", "all", getMapelData).data) || [];
+  const kode = kodeTes.toString().split(" (")[0].trim().toLowerCase();
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].kode_tes.toString().trim().toLowerCase() === kode) {
+      return { nama_mapel: list[i].nama_mapel, waktu: parseInt(list[i].waktu) || 60 };
+    }
+  }
+  return { nama_mapel: kodeTes, waktu: 60 };
+}
+
 // Cek apakah username sudah punya baris hasil_tes untuk kode tes tertentu
 // (kode di hasil_tes bisa berbentuk "KODE (KETERANGAN)", jadi dipotong dulu)
 function sudahMengerjakan_(username, kodeTes) {
-  const data = getSheet("hasil_tes").getDataRange().getValues();
+  const sheet = getSheet("hasil_tes");
+  const n = sheet.getLastRow() - 1;
+  if (n < 1) return false;
+  const data = sheet.getRange(2, 2, n, 3).getValues(); // hanya kolom username, nama, kode_tes
   const user = username.toString().trim().toLowerCase();
   const kode = kodeTes.toString().split(" (")[0].trim().toLowerCase();
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][1].toString().trim().toLowerCase() === user &&
-        data[i][3].toString().split(" (")[0].trim().toLowerCase() === kode) {
-      return true;
-    }
+  for (let i = 0; i < data.length; i++) {
+    if (data[i][0].toString().trim().toLowerCase() === user &&
+        data[i][2].toString().split(" (")[0].trim().toLowerCase() === kode) return true;
   }
   return false;
 }
@@ -245,6 +567,10 @@ function handleSimpanJawabanSiswa(payload) {
     0,
     "{}"
   ]);
+  if (payload.username) {
+    upsertSesi_(payload.username, { status: "SELESAI", kode_tes: payload.kode_tes });
+    hapusProgress_(payload.username);
+  }
   return { status: "success", message: "Jawaban berhasil dikirim!" };
 }
 
@@ -259,22 +585,16 @@ function handleRequestResetSiswa(payload) {
 // FITUR HASIL UJIAN
 function getHasilUjianData() {
   const sheet = getSheet("hasil_tes");
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return { status: "success", data: [] };
-  data.shift();
-
-  const list = data.map(row => ({
-    id: row[0],
-    username: row[1],
-    nama: row[2],
-    kode_tes: row[3],
-    nilai: row[4],
-    waktu_selesai: row[5],
-    ada_esai: (parseFloat(row[9]) || 0) > 0,
-    status_koreksi: row[10] || "FINAL",
-    skor_esai: row[11] || 0
-  }));
-  return { status: "success", data: list };
+  const n = sheet.getLastRow() - 1;
+  if (n < 1) return { status: "success", data: [] };
+  const a = sheet.getRange(2, 1, n, 6).getValues();   // tanpa kolom jawaban_json yang besar
+  const b = sheet.getRange(2, 10, n, 3).getValues();
+  return { status: "success", data: a.map((r, i) => ({
+    id: r[0], username: r[1], nama: r[2], kode_tes: r[3], nilai: r[4], waktu_selesai: r[5],
+    ada_esai: (parseFloat(b[i][0]) || 0) > 0,
+    status_koreksi: b[i][1] || "FINAL",
+    skor_esai: b[i][2] || 0
+  })) };
 }
 
 // Hapus satu hasil ujian berdasarkan id (kolom A sheet hasil_tes)
@@ -415,6 +735,9 @@ function approveResetLogin(payload) {
   for (let i = 1; i < data.length; i++) {
     if (data[i][0].toString() === payload.id.toString()) {
       sheet.getRange(i + 1, 5).setValue("DISETUJUI");
+      // Buka kunci sesi agar siswa bisa login lagi
+      const sesi = getSesi_(data[i][1]);
+      if (sesi) upsertSesi_(data[i][1], { status: "RESET", session_id: "" });
       return { status: "success", message: "Reset Login siswa telah disetujui!" };
     }
   }
@@ -440,27 +763,6 @@ function getStatusTesData() {
   if (data.length <= 1) return { status: "success", data: [] };
   data.shift();
 
-  const helperFormatDate = (val) => {
-    if (!val) return "-";
-    if (val instanceof Date) {
-      const y = val.getFullYear();
-      const m = String(val.getMonth() + 1).padStart(2, '0');
-      const d = String(val.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-    return val.toString().split('T')[0];
-  };
-
-  const helperFormatTime = (val) => {
-    if (!val) return "-";
-    if (val instanceof Date) {
-      const h = String(val.getHours()).padStart(2, '0');
-      const m = String(val.getMinutes()).padStart(2, '0');
-      return `${h}:${m}`;
-    }
-    return val.toString().split('T')[0];
-  };
-
   return {
     status: "success",
     data: data.map(row => ({
@@ -469,9 +771,10 @@ function getStatusTesData() {
       token: row[2],
       status: row[3],
       kelompok: row[4],
-      tanggal: helperFormatDate(row[5]),
-      jam_mulai: helperFormatTime(row[6]),
-      jam_selesai: helperFormatTime(row[7])
+      tanggal: toDateStr_(row[5]) || "-",
+      jam_mulai: toTimeStr_(row[6]) || "-",
+      jam_selesai: toTimeStr_(row[7]) || "-",
+      selesai: isTesSelesai_(row)
     }))
   };
 }
@@ -513,6 +816,38 @@ function toggleStatusTes(payload) {
   return { status: "error", message: "Data tes tidak ditemukan" };
 }
 
+// Edit jadwal/token tes - hanya boleh bila tes sudah selesai
+function editStatusTes(payload) {
+  const sheet = getSheet("status_tes");
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0].toString() === payload.id.toString()) {
+      if (!isTesSelesai_(data[i])) return { status: "error", message: "Tes masih berlangsung. Hentikan tes terlebih dahulu sebelum mengedit." };
+      const r = i + 1;
+      sheet.getRange(r, 2, 1, 2).setValues([[payload.kode_tes, (payload.token || "").toString().toUpperCase()]]);
+      sheet.getRange(r, 5).setValue(payload.kelompok || "1");
+      sheet.getRange(r, 6, 1, 3).setNumberFormat("@").setValues([[payload.tanggal || "", payload.jam_mulai || "", payload.jam_selesai || ""]]);
+      sheet.getRange(r, 4).setValue(payload.aktifkan ? "AKTIF" : "NONAKTIF");
+      return { status: "success", message: payload.aktifkan ? "Tes diperbarui dan diaktifkan kembali." : "Data tes berhasil diperbarui." };
+    }
+  }
+  return { status: "error", message: "Data tes tidak ditemukan" };
+}
+
+// Hapus riwayat tes - hanya boleh bila tes sudah selesai
+function deleteStatusTes(payload) {
+  const sheet = getSheet("status_tes");
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0].toString() === payload.id.toString()) {
+      if (!isTesSelesai_(data[i])) return { status: "error", message: "Tes masih berlangsung. Hentikan tes terlebih dahulu sebelum menghapus." };
+      sheet.deleteRow(i + 1);
+      return { status: "success", message: "Data tes berhasil dihapus" };
+    }
+  }
+  return { status: "error", message: "Data tes tidak ditemukan" };
+}
+
 function handleLoginAdmin(payload) {
   const sheet = getSheet("admin");
   const data = sheet.getDataRange().getValues();
@@ -542,10 +877,25 @@ function editMapel(payload) {
   for (let i = 1; i < data.length; i++) {
     if (data[i][0].toString() === payload.originalKodeTes.toString()) {
       sheet.getRange(i + 1, 1, 1, 3).setValues([[payload.kode_tes, payload.nama_mapel, payload.waktu]]);
-      return { status: "success", message: "Mata pelajaran diperbarui" };
+      let n = 0;
+      if (payload.kode_tes.toString() !== payload.originalKodeTes.toString()) {
+        n += gantiKodeTes_("soal", 2, payload.originalKodeTes, payload.kode_tes);
+        n += gantiKodeTes_("status_tes", 2, payload.originalKodeTes, payload.kode_tes);
+      }
+      return { status: "success", message: "Mata pelajaran diperbarui" + (n ? " (" + n + " soal/jadwal ikut diperbarui)" : "") };
     }
   }
   return { status: "error", message: "Data tidak ditemukan" };
+}
+// Ganti kode tes pada sheet lain agar data tetap sinkron
+function gantiKodeTes_(sheetName, colNo, lama, baru) {
+  const sheet = getSheet(sheetName);
+  const data = sheet.getDataRange().getValues();
+  let n = 0;
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][colNo - 1].toString() === lama.toString()) { sheet.getRange(i + 1, colNo).setValue(baru); n++; }
+  }
+  return n;
 }
 function deleteMapel(payload) {
   const sheet = getSheet("mapel");
@@ -681,7 +1031,7 @@ function getAllSoalData() {
 }
 
 function getSoalByKode(kodeTes) {
-  const res = getAllSoalData();
+  const res = cached_("soal", "all", getAllSoalData);
   if (res.status === "success") {
     return { status: "success", data: res.data.filter(item => item.kode_tes.toString() === kodeTes.toString()) };
   }

@@ -335,6 +335,7 @@
             if (!isUjianActive || isSubmitting) return;
 
             violationCount++;
+            autosaveDirty = true;
             updatePelanggaranUI();
 
             if (violationCount > MAX_VIOLATIONS) {
@@ -387,9 +388,12 @@
             btn.disabled = true;
             btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> Memeriksa Data...`;
 
+            let sid = sessionStorage.getItem('cbtSessionId');
+            if (!sid) { sid = 'S' + Date.now() + Math.random().toString(36).slice(2, 8); sessionStorage.setItem('cbtSessionId', sid); }
             const payload = {
                 username: document.getElementById('loginUsername').value.trim(),
-                password: document.getElementById('loginPassword').value.trim()
+                password: document.getElementById('loginPassword').value.trim(),
+                session_id: sid
             };
 
             fetch(WEB_APP_URL, {
@@ -421,6 +425,12 @@
             });
         }
 
+        let activeDurasiMenit = 60;
+        let activeSisaDetik = 3600;
+        let activeProgress = null;
+        let autosaveInterval = null, autosaveDirty = false, autosaveTick = 0;
+        let activeNamaMapel = "";
+
         function handleKonfirmasiToken(e) {
             e.preventDefault();
             const btn = document.getElementById('btnSubmitToken');
@@ -441,6 +451,10 @@
             .then(res => {
                 if (res.status === "success") {
                     activeKodeTes = res.kode_tes;
+                    activeDurasiMenit = parseInt(res.waktu) || 60;
+                    activeSisaDetik = (res.sisa_detik !== undefined) ? res.sisa_detik : activeDurasiMenit * 60;
+                    activeProgress = res.progress || null;
+                    activeNamaMapel = res.nama_mapel || res.kode_tes;
                     loadSoalUjian(activeKodeTes);
                 } else {
                     alert(res.message);
@@ -461,9 +475,10 @@
                 .then(res => {
                     if (res.status === "success" && res.data.length > 0) {
                         listSoal = res.data;
-                        document.getElementById('examTitleMapel').innerText = kodeTes;
+                        document.getElementById('examTitleMapel').innerText = activeNamaMapel || kodeTes;
                         
-                        startTimer(60 * 60);
+                        startTimer(activeSisaDetik);
+                        jawabanSiswa = (activeProgress && activeProgress.jawaban) ? activeProgress.jawaban : {};
 
                         currentSoalIndex = 0;
                         renderCurrentSoal();
@@ -471,6 +486,14 @@
                         showStep('step-ujian');
 
                         initAntiCheatEngine();
+                        if (activeProgress) {
+                            violationCount = parseInt(activeProgress.pelanggaran) || 0;
+                            updatePelanggaranUI();
+                            renderCurrentSoal();
+                            renderNavigasiGrid();
+                            alert("Ujian dilanjutkan. Jawaban sebelumnya berhasil dipulihkan, dan sisa waktu dihitung sejak Anda mulai mengerjakan.");
+                        }
+                        startAutosave();
                     } else {
                         alert("Gagal memuat soal atau soal belum diupload oleh Proktor!");
                     }
@@ -593,6 +616,7 @@
 
         function pilihJawaban(soalId, pilihan) {
             jawabanSiswa[soalId] = pilihan;
+            autosaveDirty = true;
             renderCurrentSoal();
             renderNavigasiGrid();
         }
@@ -601,6 +625,7 @@
         function setJawabanTeks(soalId, value) {
             if (value.trim() === '') delete jawabanSiswa[soalId];
             else jawabanSiswa[soalId] = value;
+            autosaveDirty = true;
             renderNavigasiGrid();
         }
 
@@ -707,11 +732,59 @@
             });
         }
 
+        // ------------------------------------------
+        // SIMPAN OTOMATIS JAWABAN KE SERVER (agar bisa dilanjutkan setelah reset)
+        // ------------------------------------------
+        function kirimProgress(keepalive) {
+            if (!isUjianActive || isSubmitting || !currentStudent) return;
+            const payload = {
+                username: currentStudent.username,
+                kode_tes: activeKodeTes,
+                session_id: sessionStorage.getItem('cbtSessionId') || '',
+                persist: !!keepalive || (autosaveTick > 0 && autosaveTick % 6 === 0)
+            };
+            if (autosaveDirty) {
+                payload.jawaban_json = JSON.stringify(jawabanSiswa);
+                payload.pelanggaran = violationCount;
+                autosaveDirty = false;
+            }
+            fetch(WEB_APP_URL, { method: "POST", keepalive: !!keepalive, body: JSON.stringify({ action: "simpanProgress", payload: payload }) })
+                .then(r => r.json())
+                .then(res => {
+                    if (res.status === "error" && res.code === "SESI_INVALID" && !isSubmitting) {
+                        stopAutosave();
+                        stopAntiCheatEngine();
+                        if (timerInterval) clearInterval(timerInterval);
+                        alert(res.message + "\nHalaman akan dimuat ulang.");
+                        location.reload();
+                    }
+                })
+                .catch(() => { if (payload.jawaban_json) autosaveDirty = true; });
+        }
+
+        function startAutosave() {
+            stopAutosave();
+            autosaveTick = 0;
+            autosaveInterval = setInterval(() => {
+                autosaveTick++;
+                // simpan jika ada perubahan; tanpa perubahan cukup kirim denyut tiap ~60 detik
+                if (autosaveDirty || autosaveTick % 3 === 0) kirimProgress(false);
+            }, 20000);
+        }
+
+        function stopAutosave() {
+            if (autosaveInterval) clearInterval(autosaveInterval);
+            autosaveInterval = null;
+        }
+
+        window.addEventListener('pagehide', () => { if (autosaveDirty) kirimProgress(true); });
+
         function submitJawabanAkhir(statusKeterangan = "NORMAL") {
             if (isSubmitting) return;
             isSubmitting = true;
 
             stopAntiCheatEngine();
+            stopAutosave();
             if (timerInterval) clearInterval(timerInterval);
 
             const loadingModal = document.getElementById('loadingSendingModal');

@@ -159,6 +159,30 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Daftar Siswa Aktif -->
+                <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                    <div class="flex justify-between items-center mb-3">
+                        <div>
+                            <h2 class="font-bold text-gray-700">Siswa Aktif Saat Ini</h2>
+                            <p class="text-xs text-gray-500">Siswa yang sedang login, mengerjakan, atau baru direset. Diperbarui otomatis tiap 30 detik.</p>
+                        </div>
+                        <span id="lblSiswaAktif" class="bg-sky-100 text-sky-700 text-xs px-2 py-1 rounded font-bold">0 siswa</span>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm border-collapse">
+                            <thead>
+                                <tr class="bg-gray-100 border-b text-gray-600">
+                                    <th class="p-2">No</th><th class="p-2">Nama</th><th class="p-2">Sesi</th><th class="p-2">Status</th>
+                                    <th class="p-2">Mapel</th><th class="p-2">Terjawab</th><th class="p-2">Terakhir Aktif</th><th class="p-2 text-center">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody id="siswaAktifTableBody">
+                                <tr><td colspan="8" class="p-3 text-center text-gray-500">Memuat...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
 
             <!-- SECTION 2: MENU MATA PELAJARAN -->
@@ -524,9 +548,23 @@
                 <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-lg font-bold text-gray-800">Daftar Status Tes Aktif</h2>
-                        <button onclick="loadStatusTesData()" class="bg-sky-600 text-white px-3 py-2 rounded-md text-sm font-semibold hover:bg-sky-700 transition">
-                            <i class="fa-solid fa-rotate mr-1"></i> Refresh Status
-                        </button>
+                        <div class="flex gap-2">
+                            <button onclick="hapusSemuaTesSelesai()" class="bg-red-600 text-white px-3 py-2 rounded-md text-sm font-semibold hover:bg-red-700 transition">
+                                <i class="fa-solid fa-broom mr-1"></i> Bersihkan Tes Selesai
+                            </button>
+                            <button onclick="loadStatusTesData()" class="bg-sky-600 text-white px-3 py-2 rounded-md text-sm font-semibold hover:bg-sky-700 transition">
+                                <i class="fa-solid fa-rotate mr-1"></i> Refresh Status
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap gap-2 items-center mb-4">
+                        <input type="text" id="searchStatusTes" oninput="renderStatusTesTable()" placeholder="Cari kode tes / token..." class="border rounded-md p-2 text-sm w-56">
+                        <select id="filterStatusTes" onchange="renderStatusTesTable()" class="border rounded-md p-2 text-sm">
+                            <option value="semua">Semua Status</option>
+                            <option value="berlangsung">Berlangsung</option>
+                            <option value="selesai">Selesai / Dihentikan</option>
+                        </select>
+                        <span id="lblRingkasStatusTes" class="text-xs text-gray-500 ml-auto"></span>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left text-sm border-collapse">
@@ -642,6 +680,56 @@
             </div>
 
         </main>
+    </div>
+
+    <!-- Modal Edit Status Tes -->
+    <div id="statusTesModal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md space-y-4 shadow-xl">
+            <h3 class="font-bold text-lg border-b pb-2"><i class="fa-solid fa-pen-to-square text-amber-500 mr-2"></i>Edit Jadwal Tes</h3>
+            <form onsubmit="handleSaveEditStatusTes(event)" class="space-y-3">
+                <input type="hidden" id="editStatusId">
+                <div>
+                    <label class="text-xs font-semibold text-gray-600">Mata Pelajaran / Kode Tes</label>
+                    <select id="editStatusKodeTes" class="w-full border rounded p-2 text-sm" required></select>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-xs font-semibold text-gray-600">Kelompok / Sesi</label>
+                        <select id="editStatusKelompok" class="w-full border rounded p-2 text-sm">
+                            <option value="1">JAM 1</option><option value="2">JAM 2</option><option value="3">JAM 3</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs font-semibold text-gray-600">Tanggal Ujian</label>
+                        <input type="date" id="editStatusTanggal" required class="w-full border rounded p-2 text-sm">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-xs font-semibold text-gray-600">Jam Mulai</label>
+                        <input type="time" id="editStatusJamMulai" required class="w-full border rounded p-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="text-xs font-semibold text-gray-600">Jam Selesai</label>
+                        <input type="time" id="editStatusJamSelesai" required class="w-full border rounded p-2 text-sm">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-gray-600">Token</label>
+                    <div class="flex gap-1">
+                        <input type="text" id="editStatusToken" required maxlength="10" class="w-full border rounded p-2 text-sm font-mono font-bold text-center uppercase">
+                        <button type="button" onclick="generateTokenEdit()" class="bg-amber-500 hover:bg-amber-600 text-white px-3 rounded text-xs" title="Token baru"><i class="fa-solid fa-arrows-rotate"></i></button>
+                    </div>
+                </div>
+                <label class="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" id="editStatusAktifkan"> Aktifkan kembali tes setelah disimpan
+                </label>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" onclick="closeStatusTesModal()" class="px-4 py-2 border rounded text-sm">Batal</button>
+                    <button type="submit" id="btnSimpanEditStatus" class="px-4 py-2 bg-blue-600 text-white rounded text-sm font-semibold hover:bg-blue-700">Simpan Perubahan</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <!-- Modal Tambah/Edit Mata Pelajaran -->
@@ -805,6 +893,30 @@
         // Variable Target Input Modal Equation
         let targetMathInputId = null;
 
+        // CACHE BROWSER: data yang jarang berubah (mapel, siswa, soal) dipakai ulang 2 menit.
+        // Cache dibuang otomatis setiap ada perubahan (POST) agar data tetap sinkron.
+        (function () {
+            const nativeFetch = window.fetch.bind(window);
+            const TTL = { getMapel: 120000, getSiswa: 120000, getAllSoal: 120000 };
+            const store = {};
+            window.fetch = function (url, opts) {
+                const isGet = !opts || !opts.method || opts.method.toUpperCase() === 'GET';
+                if (typeof url === 'string' && url.indexOf(WEB_APP_URL) === 0) {
+                    if (!isGet) { Object.keys(store).forEach(k => delete store[k]); return nativeFetch(url, opts); }
+                    const m = url.match(/[?&]action=([^&]+)/);
+                    if (m && TTL[m[1]]) {
+                        const hit = store[url];
+                        if (hit && Date.now() - hit.t < TTL[m[1]]) return hit.p.then(txt => new Response(txt, { headers: { 'Content-Type': 'application/json' } }));
+                        const p = nativeFetch(url, opts).then(r => r.text());
+                        store[url] = { t: Date.now(), p: p };
+                        p.catch(() => { delete store[url]; });
+                        return p.then(txt => new Response(txt, { headers: { 'Content-Type': 'application/json' } }));
+                    }
+                }
+                return nativeFetch(url, opts);
+            };
+        })();
+
         // 0. AUTHENTICATION ADMIN LOGIC
         function handleLoginAdmin(e) {
             e.preventDefault();
@@ -851,6 +963,64 @@
             }
         }
 
+        function formatIdle(detik) {
+            if (detik === null || detik === undefined) return '-';
+            if (detik < 60) return `${detik} dtk lalu`;
+            if (detik < 3600) return `${Math.floor(detik / 60)} mnt lalu`;
+            return `${Math.floor(detik / 3600)} jam lalu`;
+        }
+
+        function renderSiswaAktif(data) {
+            const tbody = document.getElementById('siswaAktifTableBody');
+            if (!tbody) return;
+            const aktif = data.filter(s => ["LOGIN", "MENGERJAKAN", "RESET"].includes(s.status))
+                .sort((x, y) => (x.status === "MENGERJAKAN" ? 0 : 1) - (y.status === "MENGERJAKAN" ? 0 : 1) || x.nama.toString().localeCompare(y.nama.toString()));
+            document.getElementById('lblSiswaAktif').innerText = `${aktif.length} siswa`;
+            if (aktif.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="p-3 text-center text-gray-500">Tidak ada siswa aktif saat ini.</td></tr>';
+                return;
+            }
+            const warna = { MENGERJAKAN: 'bg-emerald-100 text-emerald-700', LOGIN: 'bg-sky-100 text-sky-700', RESET: 'bg-amber-100 text-amber-700' };
+            tbody.innerHTML = '';
+            aktif.forEach((s, i) => {
+                const u = escapeHtml(s.username);
+                const macet = s.status === "MENGERJAKAN" && s.idle_detik !== null && s.idle_detik > 180;
+                const tr = document.createElement('tr');
+                tr.className = "border-b hover:bg-gray-50";
+                tr.innerHTML = `
+                    <td class="p-2">${i + 1}</td>
+                    <td class="p-2 font-medium">${escapeHtml(s.nama)}<div class="text-xs text-gray-500 font-mono">${u}</div></td>
+                    <td class="p-2">Sesi ${escapeHtml(s.kelompok)}</td>
+                    <td class="p-2"><span class="px-2 py-1 text-xs rounded-full font-bold ${warna[s.status] || ''}">${escapeHtml(s.status)}</span></td>
+                    <td class="p-2 text-xs">${escapeHtml(s.kode_tes) || '-'}</td>
+                    <td class="p-2">${s.ada_progres ? (s.terjawab !== null && s.terjawab !== undefined ? s.terjawab + ' soal' : 'tersimpan') : '-'}</td>
+                    <td class="p-2 text-xs ${macet ? 'text-red-600 font-semibold' : 'text-gray-600'}">${formatIdle(s.idle_detik)}${macet ? ' ⚠' : ''}</td>
+                    <td class="p-2 text-center whitespace-nowrap">
+                        ${s.status === "RESET" ? '<span class="text-xs text-gray-400">menunggu login</span>' : `
+                        <button onclick="resetSesiSiswa('${u}', false)" class="px-2 py-1 text-xs rounded font-semibold text-white bg-amber-500 hover:bg-amber-600" title="Buka kunci, siswa melanjutkan jawaban sebelumnya"><i class="fa-solid fa-rotate-left mr-1"></i>Reset</button>
+                        ${s.ada_progres ? `<button onclick="resetSesiSiswa('${u}', true)" class="px-2 py-1 text-xs rounded font-semibold text-white bg-red-500 hover:bg-red-600 ml-1" title="Buka kunci dan hapus jawaban tersimpan"><i class="fa-solid fa-eraser mr-1"></i>Ulang</button>` : ''}`}
+                    </td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function resetSesiSiswa(username, hapusProgress) {
+            const msg = hapusProgress
+                ? `Reset sesi ${username} dan HAPUS jawaban tersimpan?\nSiswa akan mengulang ujian dari awal.`
+                : `Reset sesi ${username}?\nSiswa bisa login lagi dan melanjutkan jawaban yang sudah tersimpan.`;
+            if (!confirm(msg)) return;
+            fetch(WEB_APP_URL, { method: "POST", body: JSON.stringify({ action: "resetSesiSiswa", payload: { username: username, hapus_progress: hapusProgress } }) })
+                .then(r => r.json())
+                .then(d => { alert(d.message); loadDashboardStats(); })
+                .catch(err => alert("Error: " + err.message));
+        }
+
+        // Auto-refresh statistik dashboard saat menu Beranda terbuka
+        setInterval(() => {
+            const b = document.getElementById('section-beranda');
+            if (b && !b.classList.contains('hidden') && sessionStorage.getItem("isAdminLoggedIn") === "true") loadDashboardStats();
+        }, 30000);
+
         // 1. Tab Navigation Switcher
         function switchMenu(menuId) {
             const sections = ['beranda', 'daftar-mapel', 'upload-soal', 'daftar-peserta', 'status-tes', 'reset-login', 'hasil-ujian'];
@@ -875,6 +1045,7 @@
                 loadSoalData();
             } else if (menuId === 'status-tes') {
                 loadMapelSelectStatusOptions();
+                if (document.getElementById('lblRingkasStatusTes')) document.getElementById('lblRingkasStatusTes').innerText = '';
                 loadStatusTesData();
             } else if (menuId === 'reset-login') {
                 loadResetLoginData();
@@ -1038,18 +1209,46 @@
                         document.getElementById('totalJam2Label').innerText = `Total Peserta : ${countJam2}`;
 
                         renderDashboardCharts(countJam1, countJam2);
+
+                        Promise.all([
+                            fetch(`${WEB_APP_URL}?action=getSesiSiswa`).then(r => r.json()),
+                            fetch(`${WEB_APP_URL}?action=getHasilUjian`).then(r => r.json())
+                        ]).then(([sesi, hasil]) => {
+                            if (sesi.status === "success") renderSiswaAktif(sesi.data);
+                            const sesiMap = {};
+                            if (sesi.status === "success") sesi.data.forEach(r => sesiMap[r.username.toString().toLowerCase()] = r.status);
+                            const sudahHasil = new Set();
+                            if (hasil.status === "success") hasil.data.forEach(r => sudahHasil.add((r.username || '').toString().toLowerCase()));
+
+                            const hitung = (kel) => {
+                                const st = { login: 0, kerja: 0, selesai: 0 };
+                                cacheSiswaData.filter(s => s.kelompok.toString() === kel).forEach(s => {
+                                    const u = s.username.toString().toLowerCase();
+                                    const sv = sesiMap[u];
+                                    if (sv === "MENGERJAKAN") st.kerja++;
+                                    else if (sv === "LOGIN") st.login++;
+                                    else if (sudahHasil.has(u) || sv === "SELESAI") st.selesai++;
+                                });
+                                return st;
+                            };
+                            const st1 = hitung("1"), st2 = hitung("2");
+                            renderDashboardCharts(countJam1, countJam2, st1, st2);
+                            const lbl = (n, st) => `Total Peserta : ${n} • Login : ${st.login} • Mengerjakan : ${st.kerja} • Selesai : ${st.selesai}`;
+                            document.getElementById('totalJam1Label').innerText = lbl(countJam1, st1);
+                            document.getElementById('totalJam2Label').innerText = lbl(countJam2, st2);
+                        }).catch(() => {});
                     }
                 })
                 .catch(err => console.error("Error Dashboard:", err));
         }
 
-        function renderDashboardCharts(Jam1Count, Jam2Count) {
-            const chartConfig = (total) => ({
+        function renderDashboardCharts(Jam1Count, Jam2Count, st1 = {login: 0, kerja: 0, selesai: 0}, st2 = {login: 0, kerja: 0, selesai: 0}) {
+            const chartConfig = (total, st) => ({
                 type: 'doughnut',
                 data: {
                     labels: ['Peserta Belum Login', 'Peserta Mengerjakan', 'Peserta Login', 'Peserta Selesai'],
                     datasets: [{
-                        data: [total, 0, 0, 0],
+                        data: [Math.max(total - st.login - st.kerja - st.selesai, 0), st.kerja, st.login, st.selesai],
                         backgroundColor: ['#f97316', '#22c55e', '#38bdf8', '#1e40af']
                     }]
                 },
@@ -1066,8 +1265,8 @@
             const ctx1 = document.getElementById('chartJam1').getContext('2d');
             const ctx2 = document.getElementById('chartJam2').getContext('2d');
 
-            chart1Instance = new Chart(ctx1, chartConfig(Jam1Count));
-            chart2Instance = new Chart(ctx2, chartConfig(Jam2Count));
+            chart1Instance = new Chart(ctx1, chartConfig(Jam1Count, st1));
+            chart2Instance = new Chart(ctx2, chartConfig(Jam2Count, st2));
         }
 
         // ==========================================
@@ -1805,6 +2004,7 @@
                         if (result.status === "success") {
                             cacheMapelData = result.data;
                             populateStatusMapelDropdown(cacheMapelData);
+                            if (cacheStatusTesData.length) renderStatusTesTable();
                         }
                     });
             } else {
@@ -1868,6 +2068,13 @@
             .finally(() => btn.disabled = false);
         }
 
+        let cacheStatusTesData = [];
+
+        function postApi(action, payload) {
+            return fetch(WEB_APP_URL, { method: "POST", body: JSON.stringify({ action: action, payload: payload }) })
+                .then(res => res.json());
+        }
+
         function loadStatusTesData() {
             const tbody = document.getElementById('statusTesTableBody');
             if (!tbody) return;
@@ -1877,96 +2084,158 @@
                 .then(res => res.json())
                 .then(result => {
                     if (result.status === "success") {
-                        renderStatusTesTable(result.data);
+                        cacheStatusTesData = result.data;
+                        renderStatusTesTable();
                     } else {
-                        tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-red-500">Gagal memuat: ${result.message}</td></tr>`;
+                        tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-red-500">Gagal memuat: ${escapeHtml(result.message)}</td></tr>`;
                     }
                 })
                 .catch(err => {
-                    tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-red-500">Error: ${err.message}</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-red-500">Error: ${escapeHtml(err.message)}</td></tr>`;
                 });
         }
 
-        function renderStatusTesTable(data) {
+        function renderStatusTesTable() {
             const tbody = document.getElementById('statusTesTableBody');
-            tbody.innerHTML = '';
+            const q = (document.getElementById('searchStatusTes').value || '').toLowerCase().trim();
+            const filter = document.getElementById('filterStatusTes').value;
+            const total = cacheStatusTesData.length;
+            const jmlSelesai = cacheStatusTesData.filter(t => t.selesai).length;
+            document.getElementById('lblRingkasStatusTes').innerText = `Total ${total} • Berlangsung ${total - jmlSelesai} • Selesai ${jmlSelesai}`;
 
+            let data = cacheStatusTesData.filter(t => {
+                if (filter === 'berlangsung' && t.selesai) return false;
+                if (filter === 'selesai' && !t.selesai) return false;
+                return !q || `${t.kode_tes} ${t.token}`.toLowerCase().includes(q);
+            });
+
+            tbody.innerHTML = '';
             if (data.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-gray-500">Belum ada tes yang dirilis.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-gray-500">${total === 0 ? 'Belum ada tes yang dirilis.' : 'Tidak ada tes yang cocok dengan filter.'}</td></tr>`;
                 return;
             }
 
-            const formatJam = (jamStr) => {
-                if (!jamStr || jamStr === '-') return '';
-                if (jamStr.includes('T')) {
-                    const dateObj = new Date(jamStr);
-                    if (!isNaN(dateObj)) {
-                        return dateObj.toTimeString().slice(0, 5);
-                    }
-                }
-                return jamStr.slice(0, 5);
-            };
-
-            const formatTgl = (tglStr) => {
-                if (!tglStr || tglStr === '-') return '-';
-                if (tglStr.includes('T')) {
-                    return tglStr.split('T')[0];
-                }
-                return tglStr;
-            };
-
             data.forEach((tes, index) => {
                 const isAktif = tes.status === "AKTIF";
-                
-                const jamMulaiClean = formatJam(tes.jam_mulai);
-                const jamSelesaiClean = formatJam(tes.jam_selesai);
-                
-                let jamPelaksanaan = '-';
-                if (jamMulaiClean && jamSelesaiClean) {
-                    jamPelaksanaan = `${jamMulaiClean} - ${jamSelesaiClean}`;
-                } else if (tes.waktu_mulai) {
-                    jamPelaksanaan = formatJam(tes.waktu_mulai);
-                }
+                const selesai = !!tes.selesai;
+                const jam = (tes.jam_mulai !== '-' && tes.jam_selesai !== '-') ? `${tes.jam_mulai} - ${tes.jam_selesai}` : '-';
+                const id = escapeHtml(tes.id);
 
-                const tanggalClean = formatTgl(tes.tanggal);
+                let badge = ['BERLANGSUNG', 'bg-emerald-100 text-emerald-700'];
+                if (!isAktif) badge = ['DIHENTIKAN', 'bg-red-100 text-red-700'];
+                else if (selesai) badge = ['SELESAI', 'bg-gray-200 text-gray-700'];
+
+                let aksi;
+                if (!selesai) {
+                    aksi = `<button onclick="toggleStatusTes('${id}', 'NONAKTIF')" class="px-3 py-1 text-xs rounded font-semibold text-white bg-red-500 hover:bg-red-600">
+                                <i class="fa-solid fa-stop mr-1"></i>Hentikan Tes</button>`;
+                } else {
+                    aksi = `${!isAktif ? `<button onclick="toggleStatusTes('${id}', 'AKTIF')" class="px-2 py-1 text-xs rounded font-semibold text-white bg-emerald-500 hover:bg-emerald-600 mr-2" title="Aktifkan kembali"><i class="fa-solid fa-play"></i></button>` : ''}
+                            <button onclick="editStatusTes('${id}')" class="text-amber-600 hover:text-amber-800 mr-3" title="Edit"><i class="fa-solid fa-pen-to-square"></i></button>
+                            <button onclick="deleteStatusTes('${id}')" class="text-red-600 hover:text-red-800" title="Hapus"><i class="fa-solid fa-trash"></i></button>`;
+                }
 
                 const tr = document.createElement('tr');
                 tr.className = "border-b hover:bg-gray-50";
                 tr.innerHTML = `
                     <td class="p-3">${index + 1}</td>
-                    <td class="p-3 font-semibold">${tes.kode_tes}</td>
-                    <td class="p-3">Sesi ${tes.kelompok}</td>
-                    <td class="p-3 text-gray-700">${tanggalClean}</td>
-                    <td class="p-3 text-gray-700 font-mono text-xs">${jamPelaksanaan}</td>
-                    <td class="p-3 font-mono font-bold text-blue-700 tracking-wider">${tes.token}</td>
-                    <td class="p-3">
-                        <span class="px-2 py-1 text-xs rounded-full font-bold ${isAktif ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}">
-                            ${tes.status}
-                        </span>
-                    </td>
-                    <td class="p-3 text-center">
-                        <button onclick="toggleStatusTes('${tes.id}', '${isAktif ? 'NONAKTIF' : 'AKTIF'}')" class="px-3 py-1 text-xs rounded font-semibold text-white ${isAktif ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'}">
-                            ${isAktif ? 'Hentikan Tes' : 'Aktifkan Kembali'}
-                        </button>
-                    </td>
-                `;
+                    <td class="p-3 font-semibold">${escapeHtml(tes.kode_tes)}<div class="text-xs font-normal text-gray-500">${escapeHtml(getNamaMapelByKode(tes.kode_tes))}</div></td>
+                    <td class="p-3">Sesi ${escapeHtml(tes.kelompok)}</td>
+                    <td class="p-3 text-gray-700">${escapeHtml(tes.tanggal)}</td>
+                    <td class="p-3 text-gray-700 font-mono text-xs">${jam}</td>
+                    <td class="p-3 font-mono font-bold text-blue-700 tracking-wider">${escapeHtml(tes.token)}</td>
+                    <td class="p-3"><span class="px-2 py-1 text-xs rounded-full font-bold ${badge[1]}">${badge[0]}</span></td>
+                    <td class="p-3 text-center whitespace-nowrap">${aksi}</td>`;
                 tbody.appendChild(tr);
             });
         }
 
         function toggleStatusTes(id, newStatus) {
-            fetch(WEB_APP_URL, {
-                method: "POST",
-                body: JSON.stringify({
-                    action: "toggleStatusTes",
-                    payload: { id: id, status: newStatus }
-                })
+            if (newStatus === 'NONAKTIF' && !confirm("Hentikan tes ini? Siswa tidak bisa lagi memakai token ini.")) return;
+            postApi("toggleStatusTes", { id: id, status: newStatus })
+                .then(data => { alert(data.message); loadStatusTesData(); })
+                .catch(err => alert("Error: " + err.message));
+        }
+
+        function editStatusTes(id) {
+            const tes = cacheStatusTesData.find(t => t.id.toString() === id.toString());
+            if (!tes) return;
+            const sel = document.getElementById('editStatusKodeTes');
+            sel.innerHTML = '';
+            const list = cacheMapelData.slice();
+            if (!list.some(m => m.kode_tes.toString() === tes.kode_tes.toString())) list.push({ kode_tes: tes.kode_tes, nama_mapel: '(tidak ada di daftar mapel)' });
+            list.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.kode_tes;
+                opt.innerText = `${m.kode_tes} - ${m.nama_mapel}`;
+                sel.appendChild(opt);
+            });
+            sel.value = tes.kode_tes;
+            document.getElementById('editStatusId').value = tes.id;
+            document.getElementById('editStatusKelompok').value = tes.kelompok;
+            document.getElementById('editStatusTanggal').value = tes.tanggal !== '-' ? tes.tanggal : '';
+            document.getElementById('editStatusJamMulai').value = tes.jam_mulai !== '-' ? tes.jam_mulai : '';
+            document.getElementById('editStatusJamSelesai').value = tes.jam_selesai !== '-' ? tes.jam_selesai : '';
+            document.getElementById('editStatusToken').value = tes.token;
+            document.getElementById('editStatusAktifkan').checked = false;
+            document.getElementById('statusTesModal').classList.remove('hidden');
+        }
+
+        function closeStatusTesModal() {
+            document.getElementById('statusTesModal').classList.add('hidden');
+        }
+
+        function generateTokenEdit() {
+            fetch(`${WEB_APP_URL}?action=generateToken`)
+                .then(res => res.json())
+                .then(d => { if (d.status === "success") document.getElementById('editStatusToken').value = d.token; });
+        }
+
+        function handleSaveEditStatusTes(e) {
+            e.preventDefault();
+            const jm = document.getElementById('editStatusJamMulai').value;
+            const js = document.getElementById('editStatusJamSelesai').value;
+            if (js <= jm) { alert("Jam selesai harus setelah jam mulai."); return; }
+            const btn = document.getElementById('btnSimpanEditStatus');
+            btn.disabled = true;
+            postApi("editStatusTes", {
+                id: document.getElementById('editStatusId').value,
+                kode_tes: document.getElementById('editStatusKodeTes').value,
+                kelompok: document.getElementById('editStatusKelompok').value,
+                tanggal: document.getElementById('editStatusTanggal').value,
+                jam_mulai: jm,
+                jam_selesai: js,
+                token: document.getElementById('editStatusToken').value.trim().toUpperCase(),
+                aktifkan: document.getElementById('editStatusAktifkan').checked
             })
-            .then(res => res.json())
             .then(data => {
                 alert(data.message);
+                if (data.status === "success") closeStatusTesModal();
                 loadStatusTesData();
-            });
+            })
+            .catch(err => alert("Error: " + err.message))
+            .finally(() => btn.disabled = false);
+        }
+
+        function deleteStatusTes(id) {
+            const tes = cacheStatusTesData.find(t => t.id.toString() === id.toString());
+            const label = tes ? `${tes.kode_tes} (Sesi ${tes.kelompok}, ${tes.tanggal})` : id;
+            if (!confirm(`Hapus data tes ${label}?\nHasil ujian siswa TIDAK ikut terhapus.`)) return;
+            postApi("deleteStatusTes", { id: id })
+                .then(data => { alert(data.message); loadStatusTesData(); })
+                .catch(err => alert("Error: " + err.message));
+        }
+
+        async function hapusSemuaTesSelesai() {
+            const list = cacheStatusTesData.filter(t => t.selesai);
+            if (list.length === 0) { alert("Tidak ada tes yang sudah selesai."); return; }
+            if (!confirm(`Hapus ${list.length} data tes yang sudah selesai/dihentikan?\nHasil ujian siswa TIDAK ikut terhapus.`)) return;
+            let ok = 0;
+            for (const t of list) {
+                try { const r = await postApi("deleteStatusTes", { id: t.id }); if (r.status === "success") ok++; } catch (e) {}
+            }
+            alert(`${ok} dari ${list.length} data tes berhasil dihapus.`);
+            loadStatusTesData();
         }
 
         // ==========================================
