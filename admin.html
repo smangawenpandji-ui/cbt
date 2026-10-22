@@ -1858,6 +1858,12 @@
                 .catch(err => alert("Error: " + err.message));
         }
 
+        // Poin selalu dikirim sebagai ANGKA ("2,5" / "2.5" -> 2.5) supaya tidak dibaca Sheets sebagai tanggal
+        function parsePoinInput(v) {
+            const n = parseFloat((v === undefined || v === null ? '' : v).toString().replace(',', '.'));
+            return n > 0 ? n : 1;
+        }
+
         function renderSoalTable(data) {
             const tbody = document.getElementById('soalTableBody');
             tbody.innerHTML = '';
@@ -1969,7 +1975,7 @@
                 id: soalId,
                 kode_tes: document.getElementById('uploadKodeTes').value,
                 tipe_soal: tipe,
-                poin: document.getElementById('uploadPoin').value,
+                poin: parsePoinInput(document.getElementById('uploadPoin').value),
                 pertanyaan: document.getElementById('uploadPertanyaan').value,
                 // Opsi hanya dipakai untuk pilihan ganda
                 opsi_a: isPG ? document.getElementById('uploadOpsiA').value : "",
@@ -2036,7 +2042,7 @@
                         opsi_d: isPG ? (clean.opsi_d || clean.opsid || clean.d || '') : '',
                         opsi_e: isPG ? (clean.opsi_e || clean.opsie || clean.e || '') : '',
                         jawaban_benar: jawaban,
-                        poin: clean.poin || clean.skor || clean.bobot || 1
+                        poin: parsePoinInput(clean.poin || clean.skor || clean.bobot)
                     };
                 }).filter(item => item.pertanyaan !== '');
 
