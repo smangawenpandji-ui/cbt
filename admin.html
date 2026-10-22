@@ -2344,20 +2344,43 @@
             const tbody = document.getElementById('hasilUjianTableBody');
             tbody.innerHTML = `<tr><td colspan="9" class="p-4 text-center text-gray-500"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Mengambil data hasil ujian...</td></tr>`;
 
-            fetch(`${WEB_APP_URL}?action=getHasilUjian`)
-                .then(res => res.json())
-                .then(result => {
+            // Data mapel WAJIB ikut dimuat supaya nama mata pelajaran bisa ditampilkan
+            // (sebelumnya hanya terisi kalau menu "Mata Pelajaran" pernah dibuka).
+            Promise.all([
+                fetch(`${WEB_APP_URL}?action=getHasilUjian`).then(res => res.json()),
+                ensureMapelLoaded()
+            ])
+                .then(([result]) => {
                     if (result.status === "success") {
                         cacheHasilData = result.data;
                         renderRekapPerMapel();
                         renderHasilUjianTable(cacheHasilData);
                     } else {
-                        tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-red-500">Gagal memuat: ${result.message}</td></tr>`;
+                        tbody.innerHTML = `<tr><td colspan="9" class="p-4 text-center text-red-500">Gagal memuat: ${result.message}</td></tr>`;
                     }
                 })
                 .catch(err => {
-                    tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-red-500">Error: ${err.message}</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="9" class="p-4 text-center text-red-500">Error: ${err.message}</td></tr>`;
                 });
+        }
+
+        // Pastikan cacheMapelData terisi (dipakai untuk menampilkan nama mata pelajaran)
+        function ensureMapelLoaded() {
+            if (cacheMapelData && cacheMapelData.length > 0) return Promise.resolve(cacheMapelData);
+            return fetch(`${WEB_APP_URL}?action=getMapel`)
+                .then(res => res.json())
+                .then(result => {
+                    if (result.status === "success") cacheMapelData = result.data;
+                    return cacheMapelData;
+                })
+                .catch(() => cacheMapelData);
+        }
+
+        function renderMapelCell(h) {
+            const kode = kodeAsliHasil(h);
+            const nama = getNamaMapelByKode(kode);
+            if (!nama) return `<span class="font-mono">${escapeHtml(kode)}</span>`;
+            return `<div class="font-medium text-gray-800">${escapeHtml(nama)}</div><div class="text-[11px] text-gray-500 font-mono">${escapeHtml(kode)}</div>`;
         }
 
         function renderHasilUjianTable(data) {
@@ -2376,7 +2399,7 @@
                     <td class="p-3">${index + 1}</td>
                     <td class="p-3 font-mono font-semibold">${hasil.username}</td>
                     <td class="p-3 font-medium">${hasil.nama}</td>
-                    <td class="p-3">${hasil.kode_tes}</td>
+                    <td class="p-3">${renderMapelCell(hasil)}</td>
                     <td class="p-3 text-center font-bold text-blue-700 text-base">${hasil.nilai}</td>
                     <td class="p-3 text-center">${renderStatusKoreksi(hasil)}</td>
                     <td class="p-3">${renderKecurangan(hasil)}</td>
@@ -2544,8 +2567,9 @@
         }
 
         function getNamaMapelByKode(kode) {
+            const k = (kode || '').toString().trim().toLowerCase();
             const m = (typeof cacheMapelData !== 'undefined' ? cacheMapelData : [])
-                .find(x => x.kode_tes && x.kode_tes.toString() === kode.toString());
+                .find(x => x.kode_tes && x.kode_tes.toString().trim().toLowerCase() === k);
             return m && m.nama_mapel ? m.nama_mapel : '';
         }
 
@@ -2597,14 +2621,14 @@
                 alert("Tidak ada data hasil ujian untuk mata pelajaran ini!");
                 return;
             }
-            const nama = getNamaMapelByKode(kode);
+            const nama = getNamaMapelByKode(kode);   // sudah dijamin terisi oleh ensureMapelLoaded()
 
             const exportData = data.map((item, idx) => ({
                 "NO": idx + 1,
                 "USERNAME": item.username,
                 "NAMA SISWA": item.nama,
-                "KODE TES": item.kode_tes,
-                "MATA PELAJARAN": nama,
+                "KODE TES": kodeAsliHasil(item),
+                "MATA PELAJARAN": nama || kodeAsliHasil(item),
                 "NILAI": item.nilai,
                 "STATUS": item.ada_esai ? (item.status_koreksi === 'FINAL' ? 'Esai sudah dikoreksi' : 'Menunggu koreksi esai') : 'Final',
                 "PELANGGARAN": item.pelanggaran || 0,
@@ -2656,7 +2680,8 @@
             const filtered = cacheHasilData.filter(item => 
                 (item.username && item.username.toString().toLowerCase().includes(query)) ||
                 (item.nama && item.nama.toString().toLowerCase().includes(query)) ||
-                (item.kode_tes && item.kode_tes.toString().toLowerCase().includes(query))
+                (item.kode_tes && item.kode_tes.toString().toLowerCase().includes(query)) ||
+                getNamaMapelByKode(kodeAsliHasil(item)).toLowerCase().includes(query)
             );
             renderHasilUjianTable(filtered);
         }
@@ -2671,7 +2696,8 @@
                 "NO": idx + 1,
                 "USERNAME": item.username,
                 "NAMA SISWA": item.nama,
-                "KODE TES": item.kode_tes,
+                "KODE TES": kodeAsliHasil(item),
+                "MATA PELAJARAN": getNamaMapelByKode(kodeAsliHasil(item)) || kodeAsliHasil(item),
                 "NILAI": item.nilai,
                 "STATUS": item.ada_esai ? (item.status_koreksi === 'FINAL' ? 'Esai sudah dikoreksi' : 'Menunggu koreksi esai') : 'Final',
                 "PELANGGARAN": item.pelanggaran || 0,
